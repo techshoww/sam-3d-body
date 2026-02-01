@@ -24,7 +24,8 @@ def load_moge(device, path=""):
     from moge.model.v2 import MoGeModel
 
     if path == "":
-        path = "Ruicheng/moge-2-vitl-normal"
+        # path = "Ruicheng/moge-2-vitl-normal"
+        path = "../moge-2-vitl-normal/model.pt"
     moge_model = MoGeModel.from_pretrained(path).to(device)
     return moge_model
 

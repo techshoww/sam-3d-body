@@ -15,14 +15,15 @@ from ..modules.mhr_utils import (
     compact_model_params_to_cont_body,
     mhr_param_hand_mask,
 )
-
+from pathlib import Path
 from ..modules.transformer import FFN
-
-MOMENTUM_ENABLED = os.environ.get("MOMENTUM_ENABLED") is None
+# MOMENTUM_ENABLED = os.environ.get("MOMENTUM_ENABLED") is None
+MOMENTUM_ENABLED=True
 try:
     if MOMENTUM_ENABLED:
+        import pymomentum.geometry as pym_geometry
         from mhr.mhr import MHR
-
+        
         MOMENTUM_ENABLED = True
         warnings.warn("Momentum is enabled")
     else:
@@ -107,6 +108,7 @@ class MHRHead(nn.Module):
         # Load MHR itself
         if MOMENTUM_ENABLED:
             self.mhr = MHR.from_files(
+                folder=Path("assets"),
                 device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
                 lod=1,
             )

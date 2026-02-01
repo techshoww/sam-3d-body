@@ -18,6 +18,7 @@ import torch
 from sam_3d_body import load_sam_3d_body, SAM3DBodyEstimator
 from tools.vis_utils import visualize_sample, visualize_sample_together
 from tqdm import tqdm
+import pymomentum.geometry as pym_geometry
 
 
 def main(args):
@@ -98,6 +99,35 @@ def main(args):
             rend_img.astype(np.uint8),
         )
 
+        if args.save_glb and len(outputs) > 0:
+            base_name = os.path.basename(image_path)[:-4]
+            glb_path = os.path.join(output_folder, f"{base_name}.glb")
+            glb_output = outputs[0]
+            full_params = np.concatenate(
+                [
+                    glb_output["mhr_model_params"],
+                    glb_output["shape_params"],
+                    glb_output["expr_params"],
+                ]
+            )
+            motion = (
+                estimator.model.head_pose.mhr.character.parameter_transform.names,
+                full_params.reshape(1, -1),
+            )
+            options = pym_geometry.FileSaveOptions(
+                mesh=True,
+                locators=True,
+                collisions=True,
+                blend_shapes=True,
+                gltf_file_format=pym_geometry.GltfFileFormat.Binary,
+            )
+            pym_geometry.Character.save_gltf(
+                glb_path,
+                estimator.model.head_pose.mhr.character,
+                fps=1.0,
+                motion=motion,
+                options=options,
+            )
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -185,6 +215,12 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Use mask-conditioned prediction (segmentation mask is automatically generated from bbox)",
+    )
+    parser.add_argument(
+        "--save_glb",
+        action="store_true",
+        default=False,
+        help="Save a GLB for the first detected person in each image",
     )
     args = parser.parse_args()
 
