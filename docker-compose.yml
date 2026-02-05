@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  sam3d:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      SAM3D_CHECKPOINT_DIR: ${SAM3D_CHECKPOINT_DIR}
+      SAM3D_CHECKPOINT_FILE: ${SAM3D_CHECKPOINT_FILE:-model.ckpt}
+    volumes:
+      - ${SAM3D_CHECKPOINT_DIR}:${SAM3D_CHECKPOINT_DIR}:ro
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -64,20 +64,42 @@ def _build_glb(
     )
 
 
+def _make_jsonable(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if torch.is_tensor(value):
+        return value.detach().cpu().tolist()
+    if isinstance(value, dict):
+        return {key: _make_jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_make_jsonable(item) for item in value]
+    return value
+
+
 app = FastAPI()
+
+
+@app.get("/")
+def root() -> dict[str, str]:
+    return {"message": "SAM-3D-Body server"}
 
 
 @app.on_event("startup")
 def _startup() -> None:
     global ESTIMATOR
 
-    checkpoint_path = os.environ.get("SAM3D_CHECKPOINT_PATH")
+    checkpoint_dir = os.environ.get("SAM3D_CHECKPOINT_DIR", "")
+    checkpoint_file = os.environ.get("SAM3D_CHECKPOINT_FILE", "model.ckpt")
+    checkpoint_path = os.path.join(checkpoint_dir, checkpoint_file)
+    if not checkpoint_path and checkpoint_dir:
+        checkpoint_path = os.path.join(checkpoint_dir, checkpoint_file)
     if not checkpoint_path:
         raise RuntimeError("SAM3D_CHECKPOINT_PATH is required")
 
-    mhr_path = os.environ.get("SAM3D_MHR_PATH", "")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model, model_cfg = load_sam_3d_body(checkpoint_path, device=device, mhr_path=mhr_path)
+    model, model_cfg = load_sam_3d_body(checkpoint_path, device=device)
     ESTIMATOR = SAM3DBodyEstimator(sam_3d_body_model=model, model_cfg=model_cfg)
 
 
@@ -93,7 +115,7 @@ def infer(request: InferenceRequest) -> dict[str, Any]:
         use_mask=request.use_mask,
     )
     if not outputs:
-        return {"outputs": [], "glb_base64": None}
+        return {"outputs": [], "faces": None, "glb_base64": None}
 
     output_dir = Path("/tmp/sam3d_glb")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -101,8 +123,17 @@ def infer(request: InferenceRequest) -> dict[str, Any]:
     _build_glb(ESTIMATOR, outputs[0], glb_path)
     glb_bytes = glb_path.read_bytes()
 
+    faces = None
+    if outputs:
+        faces = outputs[0].get("faces")
+    outputs = [
+        {key: value for key, value in output.items() if key != "faces"}
+        for output in outputs
+    ]
+
     return {
-        "outputs": outputs,
+        "outputs": _make_jsonable(outputs),
+        "faces": _make_jsonable(faces),
         "glb_base64": base64.b64encode(glb_bytes).decode("utf-8"),
     }
 
