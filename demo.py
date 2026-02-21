@@ -110,22 +110,51 @@ def main(args):
                     glb_output["expr_params"],
                 ]
             )
-            motion = (
-                estimator.model.head_pose.mhr.character.parameter_transform.names,
-                full_params.reshape(1, -1),
+            character = estimator.model.head_pose.mhr.character
+            model_params = torch.from_numpy(full_params.reshape(1, -1)).float()
+            coord_fix = np.array([1.0, -1.0, -1.0], dtype=np.float32)
+            joint_positions = (
+                glb_output["pred_joint_coords"].astype(np.float32) * coord_fix
             )
+            joints = []
+            for joint_index, joint_name in enumerate(character.skeleton.joint_names):
+                joint_parent = character.skeleton.joint_parents[joint_index]
+                if joint_parent == -1:
+                    offset = joint_positions[joint_index]
+                else:
+                    offset = joint_positions[joint_index] - joint_positions[joint_parent]
+                joints.append(
+                    pym_geometry.Joint(
+                        joint_name,
+                        joint_parent,
+                        np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
+                        offset,
+                    )
+                )
+            skeleton = pym_geometry.Skeleton(joints)
+            mesh_faces = glb_output.get("faces", estimator.faces)
+            posed_mesh = pym_geometry.Mesh(
+                glb_output["pred_vertices"].astype(np.float32) * coord_fix,
+                mesh_faces.astype(np.int32),
+            )
+            baked_character = pym_geometry.Character(
+                character.name,
+                skeleton,
+                character.parameter_transform,
+                locators=character.locators,
+            ).with_mesh_and_skin_weights(posed_mesh, character.skin_weights).rebind_skin()
+            baked_character = baked_character.with_collision_geometry([])
             options = pym_geometry.FileSaveOptions(
                 mesh=True,
-                locators=True,
-                collisions=True,
+                locators=False,
+                collisions=False,
                 blend_shapes=True,
                 gltf_file_format=pym_geometry.GltfFileFormat.Binary,
             )
             pym_geometry.Character.save_gltf(
                 glb_path,
-                estimator.model.head_pose.mhr.character,
+                baked_character,
                 fps=1.0,
-                motion=motion,
                 options=options,
             )
 
