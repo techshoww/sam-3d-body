@@ -44,7 +44,7 @@ def normalize_outputs(outputs: list[dict]) -> list[dict]:
 
 
 def main() -> None:
-    image_path = "./images/demo.jpg"
+    image_path = "./images/m.png"
     image_base64 = encode_image(image_path)
     response = requests.post(
         f"{SERVER_URL}/infer",
@@ -57,26 +57,36 @@ def main() -> None:
     output_dir = Path("output")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if payload.get("glb_base64"):
-        glb_bytes = base64.b64decode(payload["glb_base64"])
-        (output_dir / "result.glb").write_bytes(glb_bytes)
-        print("Saved GLB to output/result.glb")
-    else:
-        print("No GLB returned")
+    results = payload.get("results", [])
+    if not results:
+        print("No results returned")
+        return
 
-    outputs = normalize_outputs(payload.get("outputs", []))
-    if outputs:
+    for idx, result in enumerate(results):
+        glb_base64 = result.get("glb_base64")
+        if glb_base64:
+            glb_bytes = base64.b64decode(glb_base64)
+            glb_path = output_dir / f"result_{idx:03d}.glb"
+            glb_path.write_bytes(glb_bytes)
+            print(f"Saved GLB to {glb_path}")
+        else:
+            print(f"No GLB returned for person {idx}")
+
+    outputs = normalize_outputs(
+        [result.get("outputs") for result in results if result.get("outputs")]
+    )
+    faces_payload = next(
+        (result.get("faces") for result in results if result.get("faces") is not None),
+        None,
+    )
+    if outputs and faces_payload is not None:
         img = decode_image(image_path)
-        faces_payload = payload.get("faces")
-        if faces_payload is None:
-            print("No faces returned")
-            return
         faces = np.array(faces_payload, dtype=np.int64)
         rend_img = visualize_sample_together(img, outputs, faces)
         cv2.imwrite(str(output_dir / "result.jpg"), rend_img.astype(np.uint8))
         print("Saved visualization to output/result.jpg")
     else:
-        print("No outputs returned")
+        print("No outputs or faces returned")
 
 
 if __name__ == "__main__":

@@ -8,8 +8,10 @@ services:
     environment:
       SAM3D_CHECKPOINT_DIR: ${SAM3D_CHECKPOINT_DIR}
       SAM3D_CHECKPOINT_FILE: ${SAM3D_CHECKPOINT_FILE:-model.ckpt}
+      SAM3D_FOV_PATH: /app/moge-2-vitl-normal/model.pt
     volumes:
       - ${SAM3D_CHECKPOINT_DIR}:${SAM3D_CHECKPOINT_DIR}:ro
+      - ../moge-2-vitl-normal:/app/moge-2-vitl-normal:ro
     runtime: nvidia
     deploy:
       resources:

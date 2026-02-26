@@ -29,7 +29,7 @@ def _load_image_from_base64(image_base64: str) -> np.ndarray:
     image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
     if image is None:
         raise HTTPException(status_code=400, detail="Unable to decode image")
-    return image
+    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
 
 def _build_glb(
@@ -47,7 +47,11 @@ def _build_glb(
     character = estimator.model.head_pose.mhr.character
     model_params = torch.from_numpy(full_params.reshape(1, -1)).float()
     coord_fix = np.array([1.0, -1.0, -1.0], dtype=np.float32)
-    joint_positions = output["pred_joint_coords"].astype(np.float32) * coord_fix
+    # coord_scale = 100.0
+    coord_scale = 1.0
+    joint_positions = (
+        output["pred_joint_coords"].astype(np.float32) * coord_fix * coord_scale
+    )
     joints = []
     for joint_index, joint_name in enumerate(character.skeleton.joint_names):
         joint_parent = character.skeleton.joint_parents[joint_index]
@@ -66,7 +70,7 @@ def _build_glb(
     skeleton = pym_geometry.Skeleton(joints)
     mesh_faces = output.get("faces", estimator.faces)
     posed_mesh = pym_geometry.Mesh(
-        output["pred_vertices"].astype(np.float32) * coord_fix,
+        output["pred_vertices"].astype(np.float32) * coord_fix * coord_scale,
         mesh_faces.astype(np.int32),
     )
     baked_character = pym_geometry.Character(
@@ -126,8 +130,48 @@ def _startup() -> None:
         raise RuntimeError("SAM3D_CHECKPOINT_PATH is required")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model, model_cfg = load_sam_3d_body(checkpoint_path, device=device)
-    ESTIMATOR = SAM3DBodyEstimator(sam_3d_body_model=model, model_cfg=model_cfg)
+
+    mhr_path = os.environ.get("SAM3D_MHR_PATH", "")
+    detector_path = os.environ.get("SAM3D_DETECTOR_PATH", "")
+    segmentor_path = os.environ.get("SAM3D_SEGMENTOR_PATH", "")
+    fov_path = os.environ.get("SAM3D_FOV_PATH", "")
+    detector_name = os.environ.get("SAM3D_DETECTOR_NAME", "vitdet")
+    segmentor_name = os.environ.get("SAM3D_SEGMENTOR_NAME", "sam2")
+    fov_name = os.environ.get("SAM3D_FOV_NAME", "moge2")
+
+    model, model_cfg = load_sam_3d_body(
+        checkpoint_path, device=device, mhr_path=mhr_path
+    )
+
+    human_detector = None
+    human_segmentor = None
+    fov_estimator = None
+    if detector_name:
+        from tools.build_detector import HumanDetector
+
+        human_detector = HumanDetector(
+            name=detector_name, device=device, path=detector_path
+        )
+
+    if (segmentor_name == "sam2" and len(segmentor_path)) or segmentor_name != "sam2":
+        from tools.build_sam import HumanSegmentor
+
+        human_segmentor = HumanSegmentor(
+            name=segmentor_name, device=device, path=segmentor_path
+        )
+
+    if fov_name:
+        from tools.build_fov_estimator import FOVEstimator
+
+        fov_estimator = FOVEstimator(name=fov_name, device=device, path=fov_path)
+
+    ESTIMATOR = SAM3DBodyEstimator(
+        sam_3d_body_model=model,
+        model_cfg=model_cfg,
+        human_detector=human_detector,
+        human_segmentor=human_segmentor,
+        fov_estimator=fov_estimator,
+    )
 
 
 @app.post("/infer")
@@ -142,27 +186,28 @@ def infer(request: InferenceRequest) -> dict[str, Any]:
         use_mask=request.use_mask,
     )
     if not outputs:
-        return {"outputs": [], "faces": None, "glb_base64": None}
+        return {"results": []}
 
     output_dir = Path("/tmp/sam3d_glb")
     output_dir.mkdir(parents=True, exist_ok=True)
-    glb_path = output_dir / "result.glb"
-    _build_glb(ESTIMATOR, outputs[0], glb_path)
-    glb_bytes = glb_path.read_bytes()
 
-    faces = None
-    if outputs:
-        faces = outputs[0].get("faces")
-    outputs = [
-        {key: value for key, value in output.items() if key != "faces"}
-        for output in outputs
-    ]
+    results = []
+    for idx, output in enumerate(outputs):
+        glb_path = output_dir / f"result_{idx:03d}.glb"
+        _build_glb(ESTIMATOR, output, glb_path)
+        glb_bytes = glb_path.read_bytes()
 
-    return {
-        "outputs": _make_jsonable(outputs),
-        "faces": _make_jsonable(faces),
-        "glb_base64": base64.b64encode(glb_bytes).decode("utf-8"),
-    }
+        faces = output.get("faces")
+        output = {key: value for key, value in output.items() if key != "faces"}
+        results.append(
+            {
+                "outputs": _make_jsonable(output),
+                "faces": _make_jsonable(faces),
+                "glb_base64": base64.b64encode(glb_bytes).decode("utf-8"),
+            }
+        )
+
+    return {"results": results}
 
 
 @app.get("/health")
